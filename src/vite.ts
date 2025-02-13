@@ -6,9 +6,13 @@ import * as t from "@babel/types";
 
 /**
  * A simple Vite plugin that:
- * 1. Detects server functions and wraps them with mock registry checks
- * 2. Allows mockServerFn to register mocks that can use any imported data
- * 3. Preserves ESM module semantics while enabling mocking
+ * 1. Detects calls to `mockServerFn(realFn, mockFn)`.
+ * 2. Records pairs { realFnName -> mockFnName }.
+ * 3. Rewrites calls to realFnName(...) to mockFnName(...).
+ *
+ * In normal ESM usage, you can't reassign an import. So we rely on AST transforms:
+ * while bundling your stories (or code), we go in and replace calls to realFnName
+ * with calls to mockFnName whenever the "mock is enabled".
  */
 export interface ServerFnOverrideOptions {
   /**
@@ -26,8 +30,8 @@ export function serverFnOverridePlugin(
   options: ServerFnOverrideOptions = { enabled: true }
 ): Plugin[] {
   const { enabled, debug = false } = options;
-  // Keep track of functions we've seen to be mocked
-  const mockedFunctions = new Set<string>();
+  // Keep track of mocks and their implementations
+  const mocks = new Map<string, t.ArrowFunctionExpression>();
 
   const log = (...args: any[]) => {
     if (debug) {
@@ -66,7 +70,7 @@ export function serverFnOverridePlugin(
           let needsTransform = false;
           let isStoryFile = id.includes(".stories.");
 
-          // First pass: collect functions that are being mocked
+          // First pass: collect mock implementations from story files
           if (isStoryFile) {
             traverse(ast, {
               CallExpression(path) {
@@ -75,10 +79,13 @@ export function serverFnOverridePlugin(
                   path.node.callee.name === "mockServerFn" &&
                   path.node.arguments.length === 2
                 ) {
-                  const [realFn] = path.node.arguments;
-                  if (t.isIdentifier(realFn)) {
+                  const [realFn, mockImpl] = path.node.arguments;
+                  if (
+                    t.isIdentifier(realFn) &&
+                    t.isArrowFunctionExpression(mockImpl)
+                  ) {
                     log("Found mock for", realFn.name);
-                    mockedFunctions.add(realFn.name);
+                    mocks.set(realFn.name, mockImpl);
                     needsTransform = true;
                   }
                 }
@@ -86,45 +93,84 @@ export function serverFnOverridePlugin(
             });
           }
 
-          // Second pass: wrap server functions with mock registry checks
-          if (mockedFunctions.size > 0) {
+          // Second pass: replace any exports or declarations of the server function
+          if (mocks.size > 0) {
+            // Track what we've replaced to avoid duplicates
+            const replacedInFile = new Set<string>();
+
             traverse(ast, {
-              // Handle export declarations
+              // Replace export declarations
               ExportNamedDeclaration(path) {
                 if (t.isVariableDeclaration(path.node.declaration)) {
                   path.node.declaration.declarations.forEach((decl) => {
-                    if (
-                      t.isIdentifier(decl.id) &&
-                      mockedFunctions.has(decl.id.name)
-                    ) {
-                      log("Wrapping export of", decl.id.name, "in", id);
-                      // Add import for createMockWrapper if not present
-                      addCreateMockWrapperImport(path);
-                      // Wrap the original function with createMockWrapper
-                      decl.init = t.callExpression(
-                        t.identifier("createMockWrapper"),
-                        [decl.init as t.Expression]
-                      );
-                      needsTransform = true;
+                    if (t.isIdentifier(decl.id)) {
+                      const mock = mocks.get(decl.id.name);
+                      if (mock && !replacedInFile.has(decl.id.name)) {
+                        log("Replacing export of", decl.id.name, "in", id);
+                        decl.init = mock;
+                        replacedInFile.add(decl.id.name);
+                        needsTransform = true;
+                      }
                     }
                   });
                 }
               },
-              // Handle variable declarations
+              // Replace variable declarations
               VariableDeclarator(path) {
-                if (
-                  t.isIdentifier(path.node.id) &&
-                  mockedFunctions.has(path.node.id.name)
-                ) {
-                  log("Wrapping declaration of", path.node.id.name, "in", id);
-                  // Add import for createMockWrapper if not present
-                  addCreateMockWrapperImport(path);
-                  // Wrap the original function with createMockWrapper
-                  path.node.init = t.callExpression(
-                    t.identifier("createMockWrapper"),
-                    [path.node.init as t.Expression]
-                  );
-                  needsTransform = true;
+                if (t.isIdentifier(path.node.id)) {
+                  const mock = mocks.get(path.node.id.name);
+                  if (mock && !replacedInFile.has(path.node.id.name)) {
+                    log(
+                      "Replacing declaration of",
+                      path.node.id.name,
+                      "in",
+                      id
+                    );
+                    path.node.init = mock;
+                    replacedInFile.add(path.node.id.name);
+                    needsTransform = true;
+                  }
+                }
+              },
+              // Replace imports with mock declarations
+              ImportDeclaration(path) {
+                const replacements: t.VariableDeclaration[] = [];
+                path.node.specifiers = path.node.specifiers.filter(
+                  (specifier) => {
+                    if (
+                      t.isImportSpecifier(specifier) &&
+                      t.isIdentifier(specifier.imported)
+                    ) {
+                      const mock = mocks.get(specifier.imported.name);
+                      if (mock && !replacedInFile.has(specifier.local.name)) {
+                        log(
+                          "Replacing import of",
+                          specifier.imported.name,
+                          "in",
+                          id
+                        );
+                        replacements.push(
+                          t.variableDeclaration("const", [
+                            t.variableDeclarator(
+                              t.identifier(specifier.local.name),
+                              mock
+                            ),
+                          ])
+                        );
+                        replacedInFile.add(specifier.local.name);
+                        needsTransform = true;
+                        return false;
+                      }
+                    }
+                    return true;
+                  }
+                );
+                if (replacements.length > 0) {
+                  if (path.node.specifiers.length === 0) {
+                    path.replaceWithMultiple(replacements);
+                  } else {
+                    path.insertAfter(replacements);
+                  }
                 }
               },
             });
@@ -163,35 +209,4 @@ export function serverFnOverridePlugin(
       },
     },
   ];
-}
-
-// Helper to add createMockWrapper import if not present
-function addCreateMockWrapperImport(path: any) {
-  const program = path.findParent((p: any) => p.isProgram());
-  const hasImport = program.node.body.some(
-    (node: any) =>
-      t.isImportDeclaration(node) &&
-      node.source.value === "tanstack-mock-server-fn" &&
-      node.specifiers.some(
-        (spec: any) =>
-          t.isImportSpecifier(spec) &&
-          t.isIdentifier(spec.imported) &&
-          spec.imported.name === "createMockWrapper"
-      )
-  );
-
-  if (!hasImport) {
-    program.unshiftContainer(
-      "body",
-      t.importDeclaration(
-        [
-          t.importSpecifier(
-            t.identifier("createMockWrapper"),
-            t.identifier("createMockWrapper")
-          ),
-        ],
-        t.stringLiteral("tanstack-mock-server-fn")
-      )
-    );
-  }
 }
