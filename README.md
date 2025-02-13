@@ -115,8 +115,6 @@ Internally, the package uses a global registry to store mock implementations. In
 1. **Runtime Registry:** A global registry stores your mock implementations, keyed by the function name.
 2. **Vite Plugin Transformation:** The plugin scans your code for server functions (identified by a call chain beginning with `createServerFn`), and rewrites them to delegate to a registered mock.
 
-This design allows you to seamlessly switch between real and mock implementations, ensuring that only your tests and stories use the mocks while your production code remains untouched.
-
 ## License
 
 [MIT](./LICENSE)
