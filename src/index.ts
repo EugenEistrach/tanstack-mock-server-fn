@@ -1,2 +1,6 @@
-export { mockServerFn } from "./mock";
-export { serverFnOverridePlugin } from "./vite";
+export {
+  mockServerFn,
+  getMockImplementation,
+  clearMocks,
+  hasMock,
+} from "./mock";
