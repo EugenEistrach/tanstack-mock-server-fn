@@ -1,6 +1,6 @@
 # tanstack-mock-server-fn
 
-A lightweight utility for mocking server functions in your stories and tests.
+A lightweight utility for mocking server functions in your stories and tests. Designed to work seamlessly with ESM modules and maintain proper scoping of your mock implementations.
 
 ## Installation
 
@@ -18,7 +18,7 @@ yarn add tanstack-mock-server-fn
 
 ```ts
 // vite.config.ts
-import { serverFnOverridePlugin } from "tanstack-mock-server-fn";
+import { serverFnOverridePlugin } from "tanstack-mock-server-fn/vite";
 
 export default defineConfig({
   plugins: [
@@ -34,31 +34,63 @@ export default defineConfig({
 
 ```ts
 import { mockServerFn } from "tanstack-mock-server-fn";
-import { myServerFunction } from "./api";
+import { getUsers } from "./api";
+import { mockUserData } from "./test-data";
 
-// Mock the server function
-mockServerFn(myServerFunction, async (input) => {
-  // Return mock data
-  return {
-    data: "mocked response",
-  };
+// You can use variables and imports in your mocks
+const customUsers = [...mockUserData];
+
+// Register a mock implementation
+mockServerFn(getUsers, async () => {
+  console.log("Using mock implementation");
+  return customUsers;
 });
 
-// Now all calls to myServerFunction will use the mock implementation
-// when the plugin is enabled
+// The original getUsers function will now use the mock implementation
+// in stories/tests where mocking is enabled
+```
+
+### Advanced Usage
+
+The package uses a registry-based approach that allows you to:
+
+- Use imported data and variables in your mocks
+- Maintain proper scoping and context
+- Dynamically switch between real and mock implementations
+
+```ts
+import { mockServerFn, clearMocks } from "tanstack-mock-server-fn";
+import { createUser, deleteUser } from "./api";
+import { generateTestUser } from "./test-utils";
+
+// Mock multiple functions
+mockServerFn(createUser, async (userData) => {
+  const newUser = { ...userData, id: "test-id" };
+  mockUsers.push(newUser);
+  return newUser;
+});
+
+mockServerFn(deleteUser, async (id) => {
+  mockUsers = mockUsers.filter((user) => user.id !== id);
+  return { success: true };
+});
+
+// Clear all mocks if needed
+clearMocks();
 ```
 
 ## How it Works
 
-The package uses a Vite plugin to transform your code at build time:
+The package uses a combination of:
 
-1. Detects calls to `mockServerFn(realFn, mockFn)`
-2. Records pairs of real and mock functions
-3. Rewrites calls to use mock implementations when enabled
+1. A runtime registry to store mock implementations
+2. A Vite plugin that wraps server functions to check the registry
+3. ESM-compatible transformations that preserve module semantics
 
 This approach allows you to:
 
 - Keep your production code clean and free of mocks
+- Use any imported data or variables in your mocks
 - Easily toggle between real and mock implementations
 - Test your UI with predictable mock data
 
