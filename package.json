@@ -2,21 +2,19 @@
   "name": "tanstack-mock-server-fn",
   "version": "0.1.0",
   "description": "Mock server functions for TanStack Start server functions",
-  "main": "dist/cjs/index.js",
-  "module": "dist/esm/index.js",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/esm/index.js",
-      "require": "./dist/cjs/index.js",
-      "types": "./dist/types/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     },
     "./vite": {
-      "import": "./dist/esm/vite.js",
-      "require": "./dist/cjs/vite.js",
-      "types": "./dist/types/vite.d.ts"
+      "types": "./dist/vite.d.ts",
+      "default": "./dist/vite.js"
     }
   },
-  "types": "dist/types/index.d.ts",
   "files": [
     "dist"
   ],
@@ -50,9 +48,8 @@
     "vite": "^6.1.0"
   },
   "scripts": {
-    "build": "npm run build:esm && npm run build:types",
-    "build:esm": "tsc -p tsconfig.json --module ESNext --outDir dist/esm",
-    "build:types": "tsc -p tsconfig.json --emitDeclarationOnly --outDir dist/types",
+    "build": "tsc -p tsconfig.json --outDir dist",
+    "build:types": "tsc -p tsconfig.json --emitDeclarationOnly --outDir dist",
     "test": "echo \"Error: no test specified\" && exit 1",
     "prepublishOnly": "npm run build"
   }
