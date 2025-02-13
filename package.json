@@ -1,6 +1,6 @@
 {
   "name": "tanstack-mock-server-fn",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Mock server functions for TanStack Start server functions",
   "type": "module",
   "main": "./dist/index.js",
